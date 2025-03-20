@@ -2,6 +2,7 @@ import os
 import json
 import threading
 import time
+import requests
 import firebase_admin
 from firebase_admin import credentials, firestore
 from flask import Flask, jsonify
@@ -11,25 +12,35 @@ import yfinance as yf
 app = Flask(__name__)
 CORS(app)
 
-# ✅ Load Firebase credentials from Render environment variable
+# ✅ Load Firebase credentials
 firebase_credentials = os.getenv("FIREBASE_CREDENTIALS")
 
-if firebase_credentials:
-    cred_dict = json.loads(firebase_credentials)  # ✅ Convert string to JSON
+try:
+    if not firebase_credentials:
+        raise ValueError("🚨 FIREBASE_CREDENTIALS is missing!")
+
+    cred_dict = json.loads(firebase_credentials)
     cred = credentials.Certificate(cred_dict)
     firebase_admin.initialize_app(cred)
     db = firestore.client()
-else:
-    raise ValueError("🚨 FIREBASE_CREDENTIALS environment variable is missing!")
 
-# ✅ Predefined Stocks (Fixed List)
+except Exception as e:
+    print(f"❌ Firebase Initialization Error: {e}")
+    db = None  # Prevent further crashes
+
+# ✅ Predefined Stocks
 nifty50_top5 = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
 banknifty_top5 = ["HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "AXISBANK.NS", "KOTAKBANK.NS"]
-stock_list = nifty50_top5 + banknifty_top5  # ✅ Combine all stocks
+stock_list = nifty50_top5 + banknifty_top5
 
-# ✅ Function to Fetch & Update Firestore Every 15 Seconds
+# ✅ Function to Fetch & Update Firestore
 def update_stock_prices():
     while True:
+        if not db:  # ✅ Don't run if Firestore failed
+            print("❌ Firestore not initialized. Skipping update.")
+            time.sleep(15)
+            continue
+
         try:
             stock_data = {}
             for ticker in stock_list:
@@ -49,22 +60,39 @@ def update_stock_prices():
                 except Exception:
                     stock_data[ticker] = {"price": "N/A", "change": "N/A", "prevClose": "N/A"}
 
-                # ✅ Update Firestore
-                db.collection("market_indices").document(ticker).set(stock_data[ticker])
+            # ✅ Batch Firestore Updates
+            batch = db.batch()
+            for ticker, data in stock_data.items():
+                doc_ref = db.collection("market_indices").document(ticker)
+                batch.set(doc_ref, data)
+            batch.commit()
 
             print("✅ Stock prices updated in Firestore:", stock_data)
 
         except Exception as e:
             print("❌ Error updating stock prices:", str(e))
 
-        time.sleep(15)  # ✅ Update every 15 seconds
+        time.sleep(15)
 
-# ✅ Start Background Thread
-threading.Thread(target=update_stock_prices, daemon=True).start()
+# ✅ Function to Keep Render Alive
+def keep_alive():
+    while True:
+        try:
+            requests.get("https://your-api-url.onrender.com")  # Replace with your actual API URL
+            print("✅ Pinged Render to stay awake")
+        except Exception as e:
+            print("❌ Ping Error:", str(e))
+
+        time.sleep(45)  # Ping every 45 seconds
+
+# ✅ Start Threads Only If Firestore Works
+if db:
+    threading.Thread(target=update_stock_prices, daemon=True).start()
+    threading.Thread(target=keep_alive, daemon=True).start()
 
 @app.route('/')
 def home():
-    return "✅ Nifty & Bank Nifty Live Stock Price API is Running!"
+    return jsonify({"message": "Nifty & Bank Nifty Live Stock Price API is Running!"})
 
 @app.route('/nifty-bank-live')
 def get_stock_prices():
