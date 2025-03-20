@@ -1,5 +1,7 @@
 import os
 import json
+import threading
+import time
 import firebase_admin
 from firebase_admin import credentials, firestore
 from flask import Flask, jsonify
@@ -23,54 +25,53 @@ else:
 # ✅ Predefined Stocks (Fixed List)
 nifty50_top5 = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
 banknifty_top5 = ["HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "AXISBANK.NS", "KOTAKBANK.NS"]
+stock_list = nifty50_top5 + banknifty_top5  # ✅ Combine all stocks
+
+# ✅ Function to Fetch & Update Firestore Every 15 Seconds
+def update_stock_prices():
+    while True:
+        try:
+            stock_data = {}
+            for ticker in stock_list:
+                stock = yf.Ticker(ticker)
+                try:
+                    live_price = stock.fast_info["last_price"]
+                    prev_close = stock.fast_info["previous_close"]
+                    if prev_close:
+                        change = ((live_price - prev_close) / prev_close) * 100
+                        stock_data[ticker] = {
+                            "price": round(live_price, 2),
+                            "change": round(change, 2),
+                            "prevClose": round(prev_close, 2)
+                        }
+                    else:
+                        stock_data[ticker] = {"price": "N/A", "change": "N/A", "prevClose": "N/A"}
+                except Exception:
+                    stock_data[ticker] = {"price": "N/A", "change": "N/A", "prevClose": "N/A"}
+
+                # ✅ Update Firestore
+                db.collection("market_indices").document(ticker).set(stock_data[ticker])
+
+            print("✅ Stock prices updated in Firestore:", stock_data)
+
+        except Exception as e:
+            print("❌ Error updating stock prices:", str(e))
+
+        time.sleep(15)  # ✅ Update every 15 seconds
+
+# ✅ Start Background Thread
+threading.Thread(target=update_stock_prices, daemon=True).start()
 
 @app.route('/')
 def home():
     return "✅ Nifty & Bank Nifty Live Stock Price API is Running!"
 
-@app.route('/update-stock-prices')
-def update_stock_prices():
-    try:
-        stock_list = nifty50_top5 + banknifty_top5  # ✅ Merge both lists
-
-        stock_data = {}
-
-        for ticker in stock_list:
-            stock = yf.Ticker(ticker)
-            try:
-                live_price = stock.fast_info["last_price"]
-                prev_close = stock.fast_info["previous_close"]
-
-                if prev_close:  # Ensure previous close is available
-                    change = ((live_price - prev_close) / prev_close) * 100
-                    stock_data[ticker] = {
-                        "price": round(live_price, 2),
-                        "change": round(change, 2),
-                        "prevClose": round(prev_close, 2)
-                    }
-                else:
-                    stock_data[ticker] = {"price": "N/A", "change": "N/A", "prevClose": "N/A"}
-
-            except Exception:
-                stock_data[ticker] = {"price": "N/A", "change": "N/A", "prevClose": "N/A"}
-
-            # ✅ Update Firestore with stock price data
-            db.collection("market_indices").document(ticker).set(stock_data[ticker])
-
-        return jsonify({"message": "✅ Stock prices updated successfully", "data": stock_data})
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
 @app.route('/nifty-bank-live')
 def get_stock_prices():
     try:
-        # ✅ Fetch updated stock prices from Firestore
         docs = db.collection("market_indices").stream()
         stock_prices = {doc.id: doc.to_dict() for doc in docs}
-
         return jsonify(stock_prices)
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
