@@ -23,7 +23,7 @@ else:
     raise ValueError("🚨 FIREBASE_CREDENTIALS environment variable is missing!")
 
 # ✅ Predefined Stocks (Fixed List)
-nifty50_top5 = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
+nifty50_top5 = ["RELIANCE.NS", "TCS.NS", "BHARTIARTL.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
 banknifty_top5 = ["HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "AXISBANK.NS", "KOTAKBANK.NS"]
 stock_list = list(set(nifty50_top5 + banknifty_top5))  # ✅ Remove duplicates
 
