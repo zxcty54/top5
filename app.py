@@ -22,7 +22,7 @@ if firebase_credentials:
 else:
     raise ValueError("🚨 FIREBASE_CREDENTIALS environment variable is missing!")
 
-# ✅ Predefined Stocks (Fixed List)
+# ✅ Top 5 Stocks in Nifty & Bank Nifty
 nifty50_top5 = ["RELIANCE.NS", "TCS.NS", "BHARTIARTL.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
 banknifty_top5 = ["HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "AXISBANK.NS", "KOTAKBANK.NS"]
 stock_list = list(set(nifty50_top5 + banknifty_top5))  # ✅ Remove duplicates
@@ -33,18 +33,20 @@ def update_stock_prices():
         try:
             stock_data = {}
             tickers = " ".join(stock_list)  # ✅ Fetch all stocks in one request
-            data = yf.download(tickers=tickers, period="1d", interval="1m", progress=False)
+
+            # ✅ Fetch data for 2 days to get the previous day's close
+            data = yf.download(tickers=tickers, period="2d", interval="1d", progress=False)
 
             if "Close" in data:
-                close_prices = data["Close"].iloc[-1]  # ✅ Get latest close prices
-                prev_closes = data["Close"].iloc[-2]  # ✅ Get previous close prices (1 min before)
+                latest_prices = data["Close"].iloc[-1]  # ✅ Today's price (Live price)
+                prev_day_closes = data["Close"].iloc[-2]  # ✅ Previous day's close
 
-                batch = db.batch()  # ✅ Start a Firestore batch write
+                batch = db.batch()  # ✅ Start Firestore batch write
 
                 for ticker in stock_list:
-                    if ticker in close_prices and ticker in prev_closes:
-                        live_price = round(close_prices[ticker], 2)
-                        prev_close = round(prev_closes[ticker], 2)
+                    if ticker in latest_prices and ticker in prev_day_closes:
+                        live_price = round(latest_prices[ticker], 2)
+                        prev_close = round(prev_day_closes[ticker], 2)
                         change = round(((live_price - prev_close) / prev_close) * 100, 2)
 
                         stock_data[ticker] = {
