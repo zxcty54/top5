@@ -25,39 +25,46 @@ else:
 # ✅ Predefined Stocks (Fixed List)
 nifty50_top5 = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
 banknifty_top5 = ["HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "AXISBANK.NS", "KOTAKBANK.NS"]
-stock_list = nifty50_top5 + banknifty_top5  # ✅ Combine all stocks
+stock_list = list(set(nifty50_top5 + banknifty_top5))  # ✅ Remove duplicates
 
-# ✅ Function to Fetch & Update Firestore Every 15 Seconds
+# ✅ Function to Fetch & Update Firestore Every 15 Minutes using Batch Writes
 def update_stock_prices():
     while True:
         try:
             stock_data = {}
-            for ticker in stock_list:
-                stock = yf.Ticker(ticker)
-                try:
-                    live_price = stock.fast_info["last_price"]
-                    prev_close = stock.fast_info["previous_close"]
-                    if prev_close:
-                        change = ((live_price - prev_close) / prev_close) * 100
+            tickers = " ".join(stock_list)  # ✅ Fetch all stocks in one request
+            data = yf.download(tickers=tickers, period="1d", interval="1m", progress=False)
+
+            if "Close" in data:
+                close_prices = data["Close"].iloc[-1]  # ✅ Get latest close prices
+                prev_closes = data["Close"].iloc[-2]  # ✅ Get previous close prices (1 min before)
+
+                batch = db.batch()  # ✅ Start a Firestore batch write
+
+                for ticker in stock_list:
+                    if ticker in close_prices and ticker in prev_closes:
+                        live_price = round(close_prices[ticker], 2)
+                        prev_close = round(prev_closes[ticker], 2)
+                        change = round(((live_price - prev_close) / prev_close) * 100, 2)
+
                         stock_data[ticker] = {
-                            "price": round(live_price, 2),
-                            "change": round(change, 2),
-                            "prevClose": round(prev_close, 2)
+                            "price": live_price,
+                            "change": change,
+                            "prevClose": prev_close
                         }
-                    else:
-                        stock_data[ticker] = {"price": "N/A", "change": "N/A", "prevClose": "N/A"}
-                except Exception:
-                    stock_data[ticker] = {"price": "N/A", "change": "N/A", "prevClose": "N/A"}
+                        doc_ref = db.collection("market_indices").document(ticker)
+                        batch.set(doc_ref, stock_data[ticker])  # ✅ Batch update
 
-                # ✅ Update Firestore
-                db.collection("market_indices").document(ticker).set(stock_data[ticker])
+                batch.commit()  # ✅ Execute batch write
+                print("✅ Stock prices updated in Firestore:", stock_data)
 
-            print("✅ Stock prices updated in Firestore:", stock_data)
+            else:
+                print("❌ No stock price data found!")
 
         except Exception as e:
             print("❌ Error updating stock prices:", str(e))
 
-        time.sleep(15)  # ✅ Update every 15 seconds
+        time.sleep(900)  # ✅ Update every 15 minutes (900 seconds)
 
 # ✅ Start Background Thread
 threading.Thread(target=update_stock_prices, daemon=True).start()
@@ -70,12 +77,12 @@ def home():
 def get_stock_prices():
     try:
         stock_prices = {}
-        for ticker in stock_list:  # ✅ Fetch only predefined stocks
-            doc_ref = db.collection("market_indices").document(ticker).get()
-            if doc_ref.exists:
-                stock_prices[ticker] = doc_ref.to_dict()
+        docs = db.collection("market_indices").get()
 
-        return jsonify(stock_prices)  # ✅ Returns only selected stocks
+        for doc in docs:
+            stock_prices[doc.id] = doc.to_dict()
+
+        return jsonify(stock_prices)  # ✅ Returns all stored stock prices
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
